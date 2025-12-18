@@ -1,0 +1,19 @@
+apiVersion: awx.ansible.com/v1beta1
+kind: AWX
+metadata:
+  name: awx
+  namespace: awx
+spec:
+  service_type: ClusterIP
+
+  admin_user: admin
+  admin_password_secret: awx-admin-password
+
+  postgres_storage_class: local-path
+  postgres_storage_requirements:
+    requests:
+      storage: 5Gi
+
+  projects_persistence: true
+  projects_storage_class: local-path
+  projects_storage_size: 5Gi
