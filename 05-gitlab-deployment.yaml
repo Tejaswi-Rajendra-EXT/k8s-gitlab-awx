@@ -1,0 +1,180 @@
+# =============================================================================
+# GitLab Deployment (Optimized for Kubernetes & Low Resource Usage)
+# =============================================================================
+
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: gitlab
+  labels:
+    name: gitlab
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: gitlab-config
+  namespace: gitlab
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 2Gi
+  storageClassName: local-path
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: gitlab-logs
+  namespace: gitlab
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 5Gi
+  storageClassName: local-path
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: gitlab-data
+  namespace: gitlab
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 15Gi
+  storageClassName: local-path
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gitlab
+  namespace: gitlab
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: gitlab
+  template:
+    metadata:
+      labels:
+        app: gitlab
+    spec:
+      containers:
+      - name: gitlab
+        image: gitlab/gitlab-ce:16.9.2-ce.0
+        ports:
+        - containerPort: 80
+          name: http
+        - containerPort: 22
+          name: ssh
+
+        env:
+        - name: GITLAB_OMNIBUS_CONFIG
+          value: |
+            external_url 'http://gitlab.local'
+
+            # -----------------------------
+            # PERFORMANCE & MEMORY TUNING
+            # -----------------------------
+            puma['worker_processes'] = 1
+            sidekiq['concurrency'] = 5
+
+            # -----------------------------
+            # DISABLE HEAVY SERVICES
+            # -----------------------------
+            prometheus_monitoring['enable'] = false
+            alertmanager['enable'] = false
+            grafana['enable'] = false
+            kube_state_metrics['enable'] = false
+            node_exporter['enable'] = false
+
+            # -----------------------------
+            # NGINX (Ingress Friendly)
+            # -----------------------------
+            nginx['listen_port'] = 80
+            nginx['listen_https'] = false
+            nginx['redirect_http_to_https'] = false
+
+            # -----------------------------
+            # GITLAB BASICS
+            # -----------------------------
+            gitlab_rails['time_zone'] = 'UTC'
+            gitlab_rails['gitlab_shell_ssh_port'] = 2222
+
+            # -----------------------------
+            # DISABLE LETS ENCRYPT
+            # -----------------------------
+            letsencrypt['enable'] = false
+
+        resources:
+          requests:
+            memory: "6Gi"
+            cpu: "1500m"
+          limits:
+            memory: "10Gi"
+            cpu: "3000m"
+
+        volumeMounts:
+        - name: gitlab-config
+          mountPath: /etc/gitlab
+        - name: gitlab-logs
+          mountPath: /var/log/gitlab
+        - name: gitlab-data
+          mountPath: /var/opt/gitlab
+
+        livenessProbe:
+          httpGet:
+            path: /users/sign_in
+            port: 80
+          initialDelaySeconds: 300
+          periodSeconds: 30
+          timeoutSeconds: 10
+          failureThreshold: 5
+
+        readinessProbe:
+          httpGet:
+            path: /users/sign_in
+            port: 80
+          initialDelaySeconds: 120
+          periodSeconds: 15
+          timeoutSeconds: 5
+          failureThreshold: 5
+
+      volumes:
+      - name: gitlab-config
+        persistentVolumeClaim:
+          claimName: gitlab-config
+      - name: gitlab-logs
+        persistentVolumeClaim:
+          claimName: gitlab-logs
+      - name: gitlab-data
+        persistentVolumeClaim:
+          claimName: gitlab-data
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: gitlab
+  namespace: gitlab
+spec:
+  selector:
+    app: gitlab
+  ports:
+  - name: http
+    port: 80
+    targetPort: 80
+  - name: ssh
+    port: 22
+    targetPort: 22
+  type: ClusterIP
+
