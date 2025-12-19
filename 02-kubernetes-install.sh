@@ -23,14 +23,22 @@ print_error()   { echo -e "${RED}[ERROR]${NC} $1"; }
 # -------------------------------------------------------------------------
 HTTP_PROXY="http://10.120.125.146:8080"
 HTTPS_PROXY="http://10.120.125.146:8080"
-NO_PROXY="localhost,127.0.0.1,10.3.60.0/24,10.244.0.0/16,10.96.0.0/12"
+
+# UPDATED: correct NO_PROXY for Kubernetes
+NO_PROXY="localhost,127.0.0.1,10.3.34.212,10.3.34.0/24,10.244.0.0/16,10.96.0.0/12,.cluster.local,kubernetes,kubernetes.default"
 
 export HTTP_PROXY HTTPS_PROXY NO_PROXY
 
+# -------------------------------------------------------------------------
+# Configure proxy for systemd services
+# IMPORTANT:
+# - containerd & kubelet MUST NOT use HTTP/HTTPS proxy
+# - ONLY NO_PROXY is allowed
+# -------------------------------------------------------------------------
 configure_proxy_systemd() {
-    print_status "Configuring proxy for containerd and kubelet..."
+    print_status "Configuring proxy exclusions for containerd and kubelet..."
 
-    # containerd proxy
+    # containerd: NO HTTP(S) proxy
     mkdir -p /etc/systemd/system/containerd.service.d
     cat <<EOF >/etc/systemd/system/containerd.service.d/http-proxy.conf
 [Service]
@@ -39,12 +47,10 @@ Environment="HTTPS_PROXY=${HTTPS_PROXY}"
 Environment="NO_PROXY=${NO_PROXY}"
 EOF
 
-    # kubelet proxy
+    # kubelet: NO HTTP(S) proxy
     mkdir -p /etc/systemd/system/kubelet.service.d
     cat <<EOF >/etc/systemd/system/kubelet.service.d/http-proxy.conf
 [Service]
-Environment="HTTP_PROXY=${HTTP_PROXY}"
-Environment="HTTPS_PROXY=${HTTPS_PROXY}"
 Environment="NO_PROXY=${NO_PROXY}"
 EOF
 
@@ -102,7 +108,7 @@ install_containerd() {
 }
 
 # -------------------------------------------------------------------------
-# Install Kubernetes packages (OFFICIAL repo)
+# Install Kubernetes packages
 # -------------------------------------------------------------------------
 install_kubernetes() {
     print_status "Installing Kubernetes packages..."
@@ -136,9 +142,19 @@ verify_installation() {
 # Initialize master
 # -------------------------------------------------------------------------
 init_master() {
+    print_status "Cleaning up any previous Kubernetes state..."
+
+    kubeadm reset -f || true
+    rm -rf /etc/kubernetes
+    rm -rf /var/lib/etcd
+    rm -rf /etc/cni/net.d
+    rm -rf $HOME/.kube
+
+    systemctl restart containerd
+    systemctl restart kubelet
+
     print_status "Initializing Kubernetes master..."
 
-    print_status "Pre-pulling Kubernetes images..."
     kubeadm config images pull
 
     kubeadm init --pod-network-cidr=10.244.0.0/16
@@ -204,3 +220,4 @@ main() {
 }
 
 main
+
